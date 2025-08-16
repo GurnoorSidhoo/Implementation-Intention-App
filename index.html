@@ -1,0 +1,199 @@
+<!doctype html>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<link rel="manifest" href="manifest.webmanifest">
+<title>If–Then Intention Launcher</title>
+<style>
+  :root { --w: 980px; --pad: 12px; }
+  body{font:16px system-ui, -apple-system, Segoe UI, Roboto, Arial; margin:0; }
+  header{padding:16px; border-bottom:1px solid #eee; position:sticky; top:0; background:#fff}
+  main{max-width:var(--w); margin:0 auto; padding:16px;}
+  .row{display:grid; grid-template-columns:1fr 1fr; gap:12px}
+  label{font-weight:600}
+  input, textarea, button, select{font:inherit; padding:8px}
+  textarea{width:100%; min-height:260px}
+  .card{border:1px solid #e5e5e5; border-radius:8px; padding:12px}
+  .status{padding:8px 0; color:#444}
+  ul.autocomplete{list-style:none; margin:4px 0 0; padding:0; border:1px solid #ddd; border-radius:6px; max-height:180px; overflow:auto}
+  ul.autocomplete li{padding:8px; cursor:pointer}
+  ul.autocomplete li:hover, ul.autocomplete li.active{background:#f3f6ff}
+  .steps label{display:block; margin:6px 0}
+  .toolbar{display:flex; gap:8px; flex-wrap:wrap; justify-content:flex-end}
+  .mono{font-family:ui-monospace, SFMono-Regular, Menlo, monospace}
+</style>
+<header><strong>If–Then Intention Launcher</strong></header>
+<main>
+  <div class="card">
+    <label for="if">IF (trigger)</label>
+    <input id="if" placeholder="Start typing: e.g., watching…" autocomplete="off">
+    <ul id="ac" class="autocomplete" hidden></ul>
+    <div class="status" id="status">Ready. Type a trigger…</div>
+  </div>
+
+  <div class="row">
+    <section class="card">
+      <h3>Define / Edit THEN steps (one per line)</h3>
+      <textarea id="then" placeholder="e.g.\n1) Close YouTube tab\n2) Open Maths worksheet\n3) Do question 1"></textarea>
+      <div style="display:flex; gap:8px; margin-top:8px">
+        <button id="save">Save / Update</button>
+        <button id="del">Delete</button>
+        <span style="flex:1"></span>
+        <button id="imp">Import JSON</button>
+        <button id="exp">Export JSON</button>
+      </div>
+    </section>
+
+    <section class="card">
+      <h3>Execute — check off each THEN step</h3>
+      <div id="steps" class="steps"></div>
+      <div class="toolbar" style="margin-top:8px">
+        <button id="reset">Reset Checks</button>
+        <button id="all">Mark All Done</button>
+      </div>
+    </section>
+  </div>
+
+  <p class="mono" style="opacity:.7; margin-top:16px">
+    Tip: add this to your phone Home Screen (Share → Add to Home Screen) to make it one-tap.
+  </p>
+</main>
+
+<script>
+  // --- Storage (localStorage) ---
+  const KEY = "intentions_v1";
+  const load = () => JSON.parse(localStorage.getItem(KEY) || "[]");
+  const save = (items) => localStorage.setItem(KEY, JSON.stringify(items));
+
+  let items = load();              // [{if, then:[...]}]
+  let currentIF = null;
+
+  const $ = (id) => document.getElementById(id);
+  const ifInput = $("if"), thenTA = $("then"), stepsDiv = $("steps");
+  const ac = $("ac"), status = $("status");
+
+  // --- Autocomplete ---
+  function matches(q){
+    q = q.trim().toLowerCase();
+    if(!q) return items.map(x => x.if).slice(0,50);
+    return items.map(x=>x.if).filter(s => s.toLowerCase().includes(q)).slice(0,50);
+  }
+  function showAC(list){
+    ac.innerHTML = "";
+    if(!list.length){ ac.hidden = true; return; }
+    list.forEach((s,i)=>{
+      const li = document.createElement("li");
+      if(i===0) li.classList.add("active");
+      li.textContent = s;
+      li.onclick = ()=>{ ifInput.value = s; loadIntention(s); ac.hidden = true; };
+      ac.appendChild(li);
+    });
+    ac.hidden = false;
+  }
+  function firstAC(){ return ac.querySelector("li.active") || ac.querySelector("li"); }
+  function moveAC(dir){
+    const all = [...ac.querySelectorAll("li")];
+    const cur = ac.querySelector("li.active");
+    let i = Math.max(0, all.indexOf(cur));
+    if(dir === 1) i = Math.min(all.length-1, i+1);
+    if(dir === -1) i = Math.max(0, i-1);
+    all.forEach(li => li.classList.remove("active"));
+    all[i]?.classList.add("active");
+  }
+
+  ifInput.addEventListener("input", e=>{
+    const list = matches(ifInput.value);
+    showAC(list);
+    const exact = list.find(s => s.toLowerCase() === ifInput.value.trim().toLowerCase());
+    if(exact) loadIntention(exact);
+  });
+  ifInput.addEventListener("keydown", e=>{
+    if(e.key==="Tab"){ e.preventDefault(); const f=firstAC(); if(f){ ifInput.value=f.textContent; loadIntention(f.textContent); ac.hidden=true; } }
+    if(e.key==="Enter"){ e.preventDefault(); const f=firstAC(); if(f){ ifInput.value=f.textContent; loadIntention(f.textContent); ac.hidden=true; } else { thenTA.value=""; status.textContent="New IF. Add THEN steps and Save."; } }
+    if(e.key==="ArrowDown"){ if(!ac.hidden){ e.preventDefault(); moveAC(1);} }
+    if(e.key==="ArrowUp"){ if(!ac.hidden){ e.preventDefault(); moveAC(-1);} }
+    if(e.key==="Escape"){ ac.hidden=true; }
+  });
+  document.addEventListener("click", (e)=>{ if(!ac.contains(e.target) && e.target!==ifInput) ac.hidden=true; });
+
+  // --- CRUD ---
+  function findIndex(ifText){ return items.findIndex(x => x.if.toLowerCase() === ifText.trim().toLowerCase()); }
+  function loadIntention(ifText){
+    const i = findIndex(ifText);
+    if(i<0){ currentIF=null; thenTA.value=""; renderChecklist([]); status.textContent="No THEN steps yet."; return; }
+    currentIF = items[i].if;
+    const steps = items[i].then || [];
+    thenTA.value = steps.join("\n");
+    renderChecklist(steps);
+    status.textContent = "Loaded: If " + currentIF;
+  }
+  $("save").onclick = ()=>{
+    const ifText = ifInput.value.trim();
+    if(!ifText){ alert("Please type an IF trigger."); return; }
+    const steps = thenTA.value.split(/\r?\n/).map(s=>s.trim()).filter(Boolean);
+    const idx = findIndex(ifText);
+    const obj = { if: ifText, then: steps };
+    if(idx<0) items.push(obj); else items[idx] = obj;
+    save(items);
+    loadIntention(ifText);
+    status.textContent = (idx<0?"Added":"Updated") + " intention for: " + ifText;
+  };
+  $("del").onclick = ()=>{
+    const ifText = ifInput.value.trim();
+    const idx = findIndex(ifText);
+    if(idx<0){ alert("No saved intention for the current IF."); return; }
+    if(!confirm("Delete intention for:\n" + items[idx].if + "?")) return;
+    items.splice(idx,1); save(items);
+    ifInput.value=""; thenTA.value=""; renderChecklist([]); status.textContent="Deleted.";
+  };
+
+  // --- Checklist ---
+  let checkStates = [];
+  function renderChecklist(steps){
+    stepsDiv.innerHTML = "";
+    checkStates = steps.map(()=>false);
+    if(!steps.length){ stepsDiv.textContent="(No steps yet — add in the left panel)"; return; }
+    steps.forEach((s,i)=>{
+      const id="step"+i;
+      const lab=document.createElement("label");
+      const cb=document.createElement("input");
+      cb.type="checkbox"; cb.id=id; cb.onchange=()=>checkStates[i]=cb.checked;
+      const txt=document.createTextNode(" "+s);
+      lab.appendChild(cb); lab.appendChild(txt);
+      stepsDiv.appendChild(lab);
+    });
+  }
+  $("reset").onclick = ()=>{ [...stepsDiv.querySelectorAll("input[type=checkbox]")].forEach(cb=>cb.checked=false); checkStates = checkStates.map(()=>false); };
+  $("all").onclick = ()=>{ [...stepsDiv.querySelectorAll("input[type=checkbox]")].forEach((cb,i)=>{cb.checked=true; checkStates[i]=true;}); };
+
+  // --- Import / Export ---
+  $("exp").onclick = ()=>{
+    const blob = new Blob([JSON.stringify(items,null,2)], {type:"application/json"});
+    const a = Object.assign(document.createElement("a"), { href: URL.createObjectURL(blob), download: "intentions_export.json" });
+    a.click(); URL.revokeObjectURL(a.href);
+  };
+  $("imp").onclick = ()=>{
+    const inp = Object.assign(document.createElement("input"), { type:"file", accept:"application/json" });
+    inp.onchange = async () => {
+      const file = inp.files[0]; if(!file) return;
+      const text = await file.text();
+      const data = JSON.parse(text);
+      if(!Array.isArray(data)) { alert("Invalid file format."); return; }
+      const byIF = Object.fromEntries(items.map(x=>[x.if.toLowerCase(), x]));
+      data.forEach(obj=>{
+        const k = String(obj.if||"").trim(); if(!k) return;
+        const steps = Array.isArray(obj.then) ? obj.then.map(x=>String(x).trim()).filter(Boolean)
+                   : String(obj.then||"").split(/\r?\n/).map(s=>s.trim()).filter(Boolean);
+        byIF[k.toLowerCase()] = { if:k, then:steps };
+      });
+      items = Object.values(byIF); save(items);
+      status.textContent = "Imported " + data.length + " intentions.";
+      ifInput.dispatchEvent(new Event("input"));
+    };
+    inp.click();
+  };
+
+  // --- PWA registration ---
+  if("serviceWorker" in navigator){
+    window.addEventListener("load", ()=>navigator.serviceWorker.register("sw.js"));
+  }
+</script>
