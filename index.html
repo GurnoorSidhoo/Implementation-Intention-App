@@ -33,7 +33,7 @@
   <div class="row">
     <section class="card">
       <h3>Define / Edit THEN steps (one per line)</h3>
-      <textarea id="then" placeholder="e.g.\n1) Close YouTube tab\n2) Open Maths worksheet\n3) Do question 1"></textarea>
+      <textarea id="then" placeholder="e.g.&#10;1) Close YouTube tab&#10;2) Open Maths worksheet&#10;3) Do question 1"></textarea>
       <div style="display:flex; gap:8px; margin-top:8px">
         <button id="save">Save / Update</button>
         <button id="del">Delete</button>
@@ -152,15 +152,19 @@
     stepsDiv.innerHTML = "";
     checkStates = steps.map(()=>false);
     if(!steps.length){ stepsDiv.textContent="(No steps yet — add in the left panel)"; return; }
+    const list=document.createElement("ol");
     steps.forEach((s,i)=>{
       const id="step"+i;
+      const li=document.createElement("li");
       const lab=document.createElement("label");
       const cb=document.createElement("input");
       cb.type="checkbox"; cb.id=id; cb.onchange=()=>checkStates[i]=cb.checked;
       const txt=document.createTextNode(" "+s);
       lab.appendChild(cb); lab.appendChild(txt);
-      stepsDiv.appendChild(lab);
+      li.appendChild(lab);
+      list.appendChild(li);
     });
+    stepsDiv.appendChild(list);
   }
   $("reset").onclick = ()=>{ [...stepsDiv.querySelectorAll("input[type=checkbox]")].forEach(cb=>cb.checked=false); checkStates = checkStates.map(()=>false); };
   $("all").onclick = ()=>{ [...stepsDiv.querySelectorAll("input[type=checkbox]")].forEach((cb,i)=>{cb.checked=true; checkStates[i]=true;}); };
